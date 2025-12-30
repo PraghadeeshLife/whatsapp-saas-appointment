@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     meta_access_token: str = "your_access_token_here"
     meta_api_version: str = "v18.0"
     
+    openai_api_key: str = "your_openai_api_key_here"
+    
     # Database configuration
     database_url: str = "sqlite:///./sql_app.db"
     

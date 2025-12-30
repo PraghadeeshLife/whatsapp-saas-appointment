@@ -15,3 +15,5 @@ services:
         sync: false
       - key: META_API_VERSION
         value: v18.0
+      - key: OPENAI_API_KEY
+        sync: false
