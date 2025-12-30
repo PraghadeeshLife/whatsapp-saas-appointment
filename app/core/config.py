@@ -8,13 +8,13 @@ class Settings(BaseSettings):
     # Meta API configuration
     meta_verify_token: str = "default_verify_token"
     meta_app_secret: str = "your_app_secret_here"
-    meta_access_token: str = "your_access_token_here"
+    meta_access_token: Optional[str] = None # Now managed per tenant in DB
     meta_api_version: str = "v18.0"
     
     openai_api_key: str = "your_openai_api_key_here"
     
     # Database configuration
-    database_url: str = "sqlite:///./sql_app.db"
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/postgres"
     
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,21 +1,22 @@
 import httpx
 from app.core.config import settings
 
-async def send_text_message(phone_number_id: str, recipient_number: str, text: str):
+async def send_text_message(phone_number_id: str, recipient_number: str, text: str, access_token: str = None):
     """
     Sends a text message using the WhatsApp Business API.
+    Uses the provided access_token or falls back to the system default.
     """
+    token = access_token or settings.meta_access_token
+    if not token:
+        print("Error: No WhatsApp access token provided or configured.")
+        return False
+
     url = f"https://graph.facebook.com/{settings.meta_api_version}/{phone_number_id}/messages"
     print(f"Sending message to {url}")
     
-    headers = {
-        "Authorization": f"Bearer {settings.meta_access_token[:5]}***{settings.meta_access_token[-5:]}" if settings.meta_access_token else "NONE",
-        "Content-Type": "application/json",
-    }
-    
     # Use real headers for the actual request
     real_headers = {
-        "Authorization": f"Bearer {settings.meta_access_token}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
     
