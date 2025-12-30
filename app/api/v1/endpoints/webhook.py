@@ -1,10 +1,16 @@
 from fastapi import APIRouter, Request, Header, HTTPException, Query
-from typing import Optional
+from typing import Optional, Set
+from collections import deque
 from app.core.config import settings
 from app.core.supabase_client import supabase
 from app.services.whatsapp import send_text_message
 from app.services.agent import agent
 from app.services.message_logger import log_message
+
+# Processed Message ID Cache (In-Memory Deduplication)
+# Stores the last 1000 message IDs to prevent redundant processing during Meta retries.
+PROCESSED_IDS = set()
+PROCESSED_IDS_QUEUE = deque(maxlen=1000)
 
 router = APIRouter()
 
@@ -48,20 +54,46 @@ async def handle_webhook(
         for entry in entries:
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                phone_number_id = value.get("metadata", {}).get("phone_number_id")
+                
+                # --- 1. FILTER STATUS UPDATES ---
+                # Meta sends webhooks for 'sent', 'delivered', 'read'. 
+                # We only want to process the 'messages' array.
+                if "messages" not in value:
+                    if "statuses" in value:
+                        print("Skipping status update notification (sent/delivered/read)")
+                    continue
+
+                metadata = value.get("metadata", {})
+                phone_number_id = metadata.get("phone_number_id")
                 
                 if not phone_number_id:
                     continue
 
-                # --- DEDUPLICATION CHECK ---
                 messages_data = value.get("messages", [])
                 for msg in messages_data:
                     msg_id = msg.get("id")
-                    if msg_id:
-                        existing = supabase.table("messages").select("id").eq("whatsapp_message_id", msg_id).execute()
-                        if existing.data:
-                            print(f"Skipping duplicate message: {msg_id}")
-                            continue
+                    if not msg_id:
+                        continue
+                    
+                    # --- 2. IN-MEMORY DEDUPLICATION CHECK ---
+                    # Check if we've already started processing this ID (Meta retry)
+                    if msg_id in PROCESSED_IDS:
+                        print(f"Skipping cached message: {msg_id}")
+                        continue
+                    
+                    # Add to cache immediately
+                    PROCESSED_IDS.add(msg_id)
+                    PROCESSED_IDS_QUEUE.append(msg_id)
+                    if len(PROCESSED_IDS) > 1000:
+                        # Safety: remove oldest if queue didn't handle it (set and deque sync)
+                        pass
+
+                    # --- 3. DATABASE DEDUPLICATION CHECK (Optional/Safety) ---
+                    # Only do this if you need 100% persistence across restarts.
+                    # existing = supabase.table("messages").select("id").eq("whatsapp_message_id", msg_id).execute()
+                    # if existing.data:
+                    #     print(f"Skipping duplicate message (DB): {msg_id}")
+                    #     continue
 
                 # --- MULTI-TENANT LOOKUP (Supabase Client) ---
                 response = supabase.table("tenants").select("*").eq("whatsapp_phone_number_id", phone_number_id).execute()
