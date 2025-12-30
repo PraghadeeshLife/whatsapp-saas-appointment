@@ -11,4 +11,6 @@ langgraph>=0.0.15
 langchain>=0.1.0
 langchain-openai>=0.0.5
 psycopg2-binary>=2.9.9
-supabase>=2.3.0
+supabase>=2.10.0
+postgrest>=0.18.0
+gotrue>=2.10.0
