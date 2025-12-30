@@ -13,7 +13,11 @@ class Settings(BaseSettings):
     
     openai_api_key: str = "your_openai_api_key_here"
     
-    # Database configuration
+    # Supabase configuration
+    supabase_url: str = "your_supabase_url_here"
+    supabase_key: str = "your_supabase_key_here"
+    
+    # Database configuration (legacy SQLAlchemy)
     database_url: str = "postgresql://postgres:postgres@localhost:5432/postgres"
     
     model_config = SettingsConfigDict(

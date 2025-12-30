@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Request, Header, HTTPException, Query, Depends
+from fastapi import APIRouter, Request, Header, HTTPException, Query
 from typing import Optional
-from sqlalchemy.orm import Session
 from app.core.config import settings
-from app.db.session import get_db
-from app.models.tenant import Tenant
+from app.core.supabase_client import supabase
 from app.services.whatsapp import send_text_message
 from app.services.agent import agent
 
@@ -14,35 +12,28 @@ async def verify_webhook(
     hub_mode: Optional[str] = Query(None, alias="hub.mode"),
     hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
     hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
-    db: Session = Depends(get_db)
 ):
     """
     Handles the webhook verification from Meta.
-    In a multi-tenant SaaS, you might check against a master token 
-    or lookup the tenant if a specific identifier is passed in the URL.
+    In a multi-tenant SaaS, check against a master token.
     """
     print(f"--- Verification attempt ---")
     
-    # 1. Check against Master Token (Standard for Meta Apps)
     if hub_mode == "subscribe" and hub_verify_token == settings.meta_verify_token:
         print("Verification SUCCESS (Master Token)")
         return int(hub_challenge)
         
-    # 2. Optional: Lookup tenant-specific verify token if needed
-    # (Usually not required if you use one Meta App for all tenants)
-
     print("Verification FAILED")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 @router.post("/")
 async def handle_webhook(
     request: Request, 
-    x_hub_signature: Optional[str] = Header(None),
-    db: Session = Depends(get_db)
+    x_hub_signature: Optional[str] = Header(None)
 ):
     """
     Handles incoming messages from Meta and generates AI responses
-    after identifying the tenant from the database.
+    after identifying the tenant using the Supabase client.
     """
     print(f"--- Incoming Webhook POST ---")
     
@@ -61,13 +52,15 @@ async def handle_webhook(
                 if not phone_number_id:
                     continue
 
-                # --- MULTI-TENANT LOOKUP ---
-                tenant = db.query(Tenant).filter(Tenant.whatsapp_phone_number_id == phone_number_id).first()
-                if not tenant:
+                # --- MULTI-TENANT LOOKUP (Supabase Client) ---
+                response = supabase.table("tenants").select("*").eq("whatsapp_phone_number_id", phone_number_id).execute()
+                
+                if not response.data:
                     print(f"Tenant not found for phone_number_id: {phone_number_id}")
                     continue
                 
-                print(f"Processing message for tenant: {tenant.name}")
+                tenant_data = response.data[0]
+                print(f"Processing message for tenant: {tenant_data.get('name')}")
 
                 messages = value.get("messages", [])
                 for message in messages:
@@ -82,7 +75,7 @@ async def handle_webhook(
                                 phone_number_id=phone_number_id,
                                 recipient_number=sender_number,
                                 text=ai_response,
-                                access_token=tenant.whatsapp_access_token
+                                access_token=tenant_data.get("whatsapp_access_token")
                             )
                             
     except Exception as e:
