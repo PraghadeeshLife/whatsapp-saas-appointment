@@ -6,8 +6,15 @@ async def send_text_message(phone_number_id: str, recipient_number: str, text: s
     Sends a text message using the WhatsApp Business API.
     """
     url = f"https://graph.facebook.com/{settings.meta_api_version}/{phone_number_id}/messages"
+    print(f"Sending message to {url}")
     
     headers = {
+        "Authorization": f"Bearer {settings.meta_access_token[:5]}***{settings.meta_access_token[-5:]}" if settings.meta_access_token else "NONE",
+        "Content-Type": "application/json",
+    }
+    
+    # Use real headers for the actual request
+    real_headers = {
         "Authorization": f"Bearer {settings.meta_access_token}",
         "Content-Type": "application/json",
     }
@@ -19,14 +26,19 @@ async def send_text_message(phone_number_id: str, recipient_number: str, text: s
         "type": "text",
         "text": {"preview_url": False, "body": text},
     }
+    print(f"Message payload: {payload}")
     
     async with httpx.AsyncClient() as client:
-        response = await client.post(url, headers=headers, json=payload)
-        response_data = response.json()
-        
-        if response.status_code != 200:
-            print(f"Error sending message: {response_data}")
-            return False
+        try:
+            response = await client.post(url, headers=real_headers, json=payload)
+            response_data = response.json()
             
-        print(f"Message sent successfully: {response_data}")
-        return True
+            if response.status_code != 200:
+                print(f"Error sending message (Status {response.status_code}): {response_data}")
+                return False
+                
+            print(f"Message sent successfully: {response_data}")
+            return True
+        except Exception as e:
+            print(f"Exception during message sending: {e}")
+            return False
