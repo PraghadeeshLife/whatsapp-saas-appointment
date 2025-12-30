@@ -17,9 +17,6 @@ class Settings(BaseSettings):
     supabase_url: str = "your_supabase_url_here"
     supabase_key: str = "your_supabase_key_here"
     
-    # Database configuration (legacy SQLAlchemy)
-    database_url: str = "postgresql://postgres:postgres@localhost:5432/postgres"
-    
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore"
