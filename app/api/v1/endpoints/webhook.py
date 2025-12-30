@@ -1,3 +1,5 @@
+from fastapi import APIRouter, Request, Header, HTTPException, Query
+from typing import Optional
 from app.core.config import settings
 from app.services.whatsapp import send_text_message
 from app.services.agent import agent
@@ -6,10 +8,27 @@ router = APIRouter()
 
 @router.get("/")
 async def verify_webhook(
-# ... existing code for verify_webhook ...
+    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
+    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
+    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
 ):
-# ... existing code ...
-    pass # placeholder for brevity in replace, but I'll replace the whole block
+    """
+    Handles the webhook verification from Meta.
+    """
+    print(f"--- Verification attempt ---")
+    print(f"hub.mode: {hub_mode}")
+    print(f"hub.verify_token: {hub_verify_token}")
+    print(f"hub.challenge: {hub_challenge}")
+    
+    if hub_mode == "subscribe" and hub_verify_token == settings.meta_verify_token:
+        print("Verification SUCCESS")
+        try:
+            return int(hub_challenge)
+        except (TypeError, ValueError):
+            return hub_challenge
+            
+    print("Verification FAILED")
+    raise HTTPException(status_code=403, detail="Verification failed")
 
 @router.post("/")
 async def handle_webhook(request: Request, x_hub_signature: Optional[str] = Header(None)):
