@@ -1,6 +1,6 @@
--- Create Tenants Table
 CREATE TABLE IF NOT EXISTS tenants (
     id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL, -- Link to Supabase Auth (auth.users)
     name VARCHAR(255),
     whatsapp_phone_number_id VARCHAR(255) UNIQUE NOT NULL,
     whatsapp_access_token TEXT NOT NULL,

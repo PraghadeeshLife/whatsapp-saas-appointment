@@ -53,6 +53,16 @@ async def handle_webhook(
                 if not phone_number_id:
                     continue
 
+                # --- DEDUPLICATION CHECK ---
+                messages_data = value.get("messages", [])
+                for msg in messages_data:
+                    msg_id = msg.get("id")
+                    if msg_id:
+                        existing = supabase.table("messages").select("id").eq("whatsapp_message_id", msg_id).execute()
+                        if existing.data:
+                            print(f"Skipping duplicate message: {msg_id}")
+                            continue
+
                 # --- MULTI-TENANT LOOKUP (Supabase Client) ---
                 response = supabase.table("tenants").select("*").eq("whatsapp_phone_number_id", phone_number_id).execute()
                 
