@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.core.supabase_client import supabase
 from app.services.whatsapp import send_text_message
 from app.services.agent import agent
+from app.services.message_logger import log_message
 
 router = APIRouter()
 
@@ -68,6 +69,17 @@ async def handle_webhook(
                     if message.get("type") == "text":
                         text_body = message.get("text", {}).get("body")
                         if text_body:
+                            # --- LOG INBOUND MESSAGE ---
+                            await log_message(
+                                tenant_id=tenant_data.get("id"),
+                                sender_number=sender_number,
+                                recipient_number=tenant_data.get("whatsapp_phone_number_id"),
+                                text=text_body,
+                                direction="inbound",
+                                status="received",
+                                whatsapp_message_id=message.get("id")
+                            )
+
                             print(f"Generating AI response for: '{text_body}'")
                             ai_response = await agent.get_response(text_body)
                             
@@ -75,7 +87,8 @@ async def handle_webhook(
                                 phone_number_id=phone_number_id,
                                 recipient_number=sender_number,
                                 text=ai_response,
-                                access_token=tenant_data.get("whatsapp_access_token")
+                                access_token=tenant_data.get("whatsapp_access_token"),
+                                tenant_id=tenant_data.get("id")
                             )
                             
     except Exception as e:

@@ -1,11 +1,19 @@
 import httpx
 from app.core.config import settings
+from typing import Optional
 
-async def send_text_message(phone_number_id: str, recipient_number: str, text: str, access_token: str = None):
+async def send_text_message(
+    phone_number_id: str,
+    recipient_number: str,
+    text: str,
+    access_token: Optional[str] = None,
+    tenant_id: Optional[int] = None
+):
     """
     Sends a text message using the WhatsApp Business API.
-    Uses the provided access_token or falls back to the system default.
     """
+    from app.services.message_logger import log_message
+    
     token = access_token or settings.meta_access_token
     if not token:
         print("Error: No WhatsApp access token provided or configured.")
@@ -38,8 +46,22 @@ async def send_text_message(phone_number_id: str, recipient_number: str, text: s
                 print(f"Error sending message (Status {response.status_code}): {response_data}")
                 return False
                 
-            print(f"Message sent successfully: {response_data}")
-            return True
+            print(f"Message sent successfully to {recipient_number}")
+            resp_json = response_data # Use the already parsed response_data
+            whatsapp_message_id = resp_json.get("messages", [{}])[0].get("id")
+            
+            # --- LOG OUTBOUND MESSAGE ---
+            if tenant_id:
+                await log_message(
+                    tenant_id=tenant_id,
+                    sender_number=phone_number_id,
+                    recipient_number=recipient_number,
+                    text=text,
+                    direction="outbound",
+                    status="sent",
+                    whatsapp_message_id=whatsapp_message_id
+                )
+            return resp_json
         except Exception as e:
             print(f"Exception during message sending: {e}")
             return False
