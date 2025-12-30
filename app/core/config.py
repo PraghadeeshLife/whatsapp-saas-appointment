@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     supabase_url: str = "your_supabase_url_here"
     supabase_key: str = "your_supabase_key_here"
     
+    # CORS configuration
+    backend_cors_origins: list[str] = ["*"]
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore"
