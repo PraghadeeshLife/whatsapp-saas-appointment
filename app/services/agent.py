@@ -22,70 +22,76 @@ class AgentState(TypedDict):
 # --- Defined Tools ---
 
 @tool
-async def get_available_resources(state: AgentState) -> List[Dict[str, str]]:
-    """Returns the list of doctors/resources available in the clinic."""
+async def get_available_resources(state: AgentState) -> str:
+    """Returns a list of available resources (e.g., staff, rooms, equipment, service providers) available."""
     tenant_id = state.get("tenant_id")
-    return await calendar_service.get_available_resources(tenant_id)
+    print(f"TENANT ID: {tenant_id}")
+    resources = await calendar_service.get_available_resources(tenant_id)
+    if not resources:
+        return "No resources are currently registered for this account."
+    
+    msg = "Available Resources:\n"
+    for r in resources:
+        msg += f"- {r['name']} ({r.get('description', 'No description')})\n"
+    return msg
 
 @tool
-async def check_availability(state: AgentState, doctor_name: str, date_str: str) -> str:
+async def check_availability(state: AgentState, resource_name: str, date_str: str) -> str:
     """
-    Check availability for a specific doctor on a specific date.
-    doctor_name: Name of the doctor (e.g., 'Dr. Smith')
+    Check availability for a specific resource on a specific date.
+    resource_name: Name of the resource or provider
     date_str: Date in YYYY-MM-DD format
     """
     tenant_id = state.get("tenant_id")
     resources = await calendar_service.get_available_resources(tenant_id)
-    resource = next((r for r in resources if doctor_name.lower() in r["name"].lower()), None)
+    resource = next((r for r in resources if resource_name.lower() in r["name"].lower()), None)
     
     if not resource:
-        return f"Doctor '{doctor_name}' not found. Available doctors: {', '.join([r['name'] for r in resources])}"
+        return f"Resource '{resource_name}' not found. Available: {', '.join([r['name'] for r in resources])}"
 
     time_min = f"{date_str}T00:00:00Z"
     time_max = f"{date_str}T23:59:59Z"
     
-    events = await calendar_service.list_events(tenant_id, time_min, time_max, resource["id"])
+    # Use external_id (e.g., Google Calendar ID) if available
+    external_id = resource.get("external_id")
+    events = await calendar_service.list_events(tenant_id, time_min, time_max, external_id)
     
     if not events:
-        return f"{doctor_name} is fully available on {date_str} (9 AM - 5 PM)."
+        return f"{resource_name} is fully available on {date_str} during business hours."
     
     # Simple summary of booked slots
     booked = []
     for e in events:
         start_time = e["start"]
-        if 'T' in start_time:
-            # Handle ISO format
-            try:
-                dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                booked.append(dt.strftime("%I:%M %p"))
-            except ValueError:
-                booked.append(start_time)
-        else:
+        try:
+            dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            booked.append(dt.strftime("%I:%M %p"))
+        except:
             booked.append(start_time)
     
-    return f"{doctor_name} has appointments at {', '.join(booked)} on {date_str}. Other slots between 9 AM and 5 PM are free."
+    return f"{resource_name} is booked at: {', '.join(booked)} on {date_str}. Other slots are available."
 
 @tool
-async def book_appointment(state: AgentState, doctor_name: str, appointment_time: str, user_name: str, user_phone: str) -> str:
+async def book_appointment(state: AgentState, resource_name: str, appointment_time: str, user_name: str, user_phone: str) -> str:
     """
-    Book an appointment.
-    doctor_name: Name of the doctor
+    Book an appointment/slot.
+    resource_name: Name of the resource or provider
     appointment_time: ISO format string (e.g., 2023-10-25T14:30:00)
     user_name: Name of the person booking
     user_phone: Phone number of the user
     """
     tenant_id = state.get("tenant_id")
     resources = await calendar_service.get_available_resources(tenant_id)
-    resource = next((r for r in resources if doctor_name.lower() in r["name"].lower()), None)
+    resource = next((r for r in resources if resource_name.lower() in r["name"].lower()), None)
     
     if not resource:
-        return f"Doctor '{doctor_name}' not found."
+        return f"Resource '{resource_name}' not found."
 
     # End time 1 hour later
     try:
         start_dt = datetime.fromisoformat(appointment_time)
     except ValueError:
-        return f"Invalid appointment time format: {appointment_time}. Please use ISO format."
+        return f"Invalid time format: {appointment_time}. Please use ISO format."
         
     end_dt = start_dt + timedelta(hours=1)
     end_time = end_dt.isoformat()
@@ -93,15 +99,15 @@ async def book_appointment(state: AgentState, doctor_name: str, appointment_time
     try:
         event = await calendar_service.create_event(
             tenant_id=tenant_id,
-            summary=f"Appointment with {doctor_name}: {user_name}",
+            summary=f"Booking for {resource_name}: {user_name}",
             start_time=appointment_time,
             end_time=end_time,
-            resource_id=resource["id"],
-            description=f"Patient: {user_name}\nPhone: {user_phone}"
+            resource_id=resource.get("external_id") or resource["id"],
+            description=f"Client: {user_name}\nPhone: {user_phone}"
         )
-        return f"Confirmed! Appointment with {doctor_name} booked for {start_dt.strftime('%B %d at %I:%M %p')}. Ticket ID: {event['id']}"
+        return f"Confirmed! Booking for {resource_name} confirmed for {start_dt.strftime('%B %d at %I:%M %p')}. Ticket ID: {event['id']}"
     except Exception as e:
-        return f"Error booking appointment: {str(e)}"
+        return f"Error booking: {str(e)}"
 
 @tool
 async def cancel_appointment(state: AgentState, appointment_id: str) -> str:

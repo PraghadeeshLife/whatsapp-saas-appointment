@@ -1,4 +1,5 @@
 import os
+import json
 import datetime
 import os.path
 from typing import List, Optional, Dict, Any
@@ -17,14 +18,9 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 class CalendarService:
     """
     Wrapper for Google Calendar API interactions.
-    Handles dynamic authentication per tenant.
+    Handles dynamic authentication and generic resource management per tenant.
     """
     def __init__(self):
-        self.resources = [
-            {"id": "dr_smith", "name": "Dr. Smith", "specialty": "General Practice"},
-            {"id": "dr_jones", "name": "Dr. Jones", "specialty": "Pediatrics"},
-            {"id": "dr_lee", "name": "Dr. Lee", "specialty": "Dermatology"},
-        ]
         # In-memory mock data (only used if no credentials found for a tenant)
         self.mock_events = []
         self._load_mock_data()
@@ -75,13 +71,30 @@ class CalendarService:
         ]
 
     async def get_available_resources(self, tenant_id: int) -> List[Dict[str, str]]:
-        """Returns the list of doctors/resources for this tenant."""
-        # For now, we return a global list, but in a real SaaS these would also be from DB
-        return self.resources
+        """Returns the list of resources (Doctors, Rooms, Staff) for this tenant from DB."""
+        try:
+            print(f"[DEBUG] Fetching resources for tenant {tenant_id}...")
+            response = supabase.table("resources").select("*").eq("tenant_id", tenant_id).execute()
+            if response.data:
+                # Map DB format to Agent/Calendar expected format
+                return [
+                    {
+                        "id": str(r["id"]),
+                        "external_id": r.get("external_id"),
+                        "name": r["name"],
+                        "description": r.get("description", "")
+                    }
+                    for r in response.data
+                ]
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch resources for tenant {tenant_id}: {e}")
+        
+        # Fallback to empty list or basic mock if needed
+        return []
 
-    async def list_events(self, tenant_id: int, time_min: str, time_max: str, resource_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def list_events(self, tenant_id: int, time_min: str, time_max: str, resource_external_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        List events for a specific resource.
+        List events for a specific resource using its external_id (Google Calendar ID).
         """
         service, calendar_id, use_mock = self.get_service_for_tenant(tenant_id)
 
@@ -91,12 +104,14 @@ class CalendarService:
             filtered = []
             for event in events:
                 if event["start"] >= time_min and event["end"] <= time_max:
-                    if not resource_id or event.get("resource_id") == resource_id:
+                    if not resource_external_id or event.get("resource_id") == resource_external_id:
                         filtered.append(event)
             return filtered
 
         try:
             print(f"[DEBUG] Executing list call for {calendar_id} (Tenant: {tenant_id})...")
+            # Note: We use the resource_external_id to filter events in the description or via specific logic if needed.
+            # For simplicity, we list all events on the tenant's primary calendar and filter.
             events_result = service.events().list(
                 calendarId=calendar_id,
                 timeMin=time_min,
@@ -131,8 +146,8 @@ class CalendarService:
                     "description": desc
                 })
             
-            if resource_id:
-                mapped_events = [e for e in mapped_events if e["resource_id"] == resource_id]
+            if resource_external_id:
+                mapped_events = [e for e in mapped_events if e["resource_id"] == resource_external_id]
                 
             return mapped_events
         except HttpError as error:

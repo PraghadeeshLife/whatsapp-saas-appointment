@@ -34,8 +34,22 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Create Resources Table (Generic: Doctors, Rooms, etc.)
+CREATE TABLE IF NOT EXISTS resources (
+    id SERIAL PRIMARY KEY,
+    tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT, -- e.g., Specialty or Room Type
+    external_id VARCHAR(255), -- ID in external system (like Google Calendar)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Update Appointments Table to reference resources
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS resource_id INTEGER REFERENCES resources(id) ON DELETE SET NULL;
+
 -- Indexes for faster lookups
 CREATE INDEX IF NOT EXISTS idx_tenants_phone_id ON tenants(whatsapp_phone_number_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_customer_phone ON appointments(customer_phone);
 CREATE INDEX IF NOT EXISTS idx_messages_tenant_id ON messages(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_messages_whatsapp_id ON messages(whatsapp_message_id);
+CREATE INDEX IF NOT EXISTS idx_resources_tenant_id ON resources(tenant_id);
