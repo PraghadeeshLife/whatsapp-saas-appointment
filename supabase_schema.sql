@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS tenants (
     whatsapp_phone_number_id VARCHAR(255) UNIQUE NOT NULL,
     whatsapp_access_token TEXT NOT NULL,
     webhook_verify_token VARCHAR(255),
+    google_service_account_json TEXT, -- Service account JSON content
+    google_calendar_id VARCHAR(255),  -- The clinic's calendar ID (usually an email)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

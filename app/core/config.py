@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     supabase_url: str = "your_supabase_url_here"
     supabase_key: str = "your_supabase_key_here"
     
+    # Google Calendar configuration
+    google_calendar_credentials: Optional[str] = None
+    google_calendar_token: Optional[str] = None
+    google_calendar_id: str = "primary"
+    timezone: str = "Asia/Kolkata"
+    
     # CORS configuration
     backend_cors_origins: list[str] = ["*"]
     

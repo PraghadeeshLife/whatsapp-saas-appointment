@@ -164,3 +164,4 @@ cython_debug/
 sql_app.db
 sql_app.db-journal
 .DS_Store
+dashboard/

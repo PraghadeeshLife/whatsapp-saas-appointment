@@ -123,7 +123,11 @@ async def handle_webhook(
                             )
 
                             print(f"Generating AI response for: '{text_body}'")
-                            ai_response = await agent.get_response(text_body)
+                            ai_response = await agent.get_response(
+                                text=text_body, 
+                                sender_number=sender_number,
+                                tenant_id=tenant_data.get("id")
+                            )
                             
                             await send_text_message(
                                 phone_number_id=phone_number_id,

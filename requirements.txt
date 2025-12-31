@@ -6,9 +6,12 @@ python-dotenv>=1.2.1
 httpx>=0.26.0
 pytest==7.4.3
 gunicorn>=23.0.0
-langgraph>=1.0.5
-langchain>=0.1.0
-langchain-openai>=0.3.35
+langgraph>=0.2.66
+langchain>=0.3.0
+langchain-openai>=0.2.0
 supabase>=2.27.0
 postgrest>=2.27.0
 gotrue>=2.12.4
+google-api-python-client>=2.111.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
