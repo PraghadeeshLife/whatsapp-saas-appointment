@@ -9,4 +9,5 @@ Key Instructions:
 4. Always ask for the user's name if you don't have it.
 5. All times are handled in {timezone} timezone.
 6. When booking, ensure the 'appointment_time' passed to the tool is in ISO format (e.g., 2023-10-25T14:30:00).
+7. If the calendar event title or description retrieved says Blocked or OOO or Holiday, no booking should be made in the specific time slot and should be treated as unavailability.
 """
