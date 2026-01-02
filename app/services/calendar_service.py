@@ -61,6 +61,37 @@ class CalendarService:
             logger.error(f"Auth failed for tenant {tenant_id}: {e}")
             return None, "primary", True
 
+    def _ensure_timezone(self, time_str: str) -> str:
+        """
+        Parses a time string and ensures it has a valid timezone offset.
+        If naive, assumes it belongs to the application's configured timezone (settings.timezone).
+        """
+        if not time_str:
+            return time_str
+        
+        try:
+            # 1. Try parsing as full ISO (potentially with TZ)
+            # replacing Z with +00:00 to handle standard UTC notation if present
+            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+            
+            # 2. If valid and has tzinfo, return as is (or formatted consistently)
+            if dt.tzinfo is not None:
+                return dt.isoformat()
+            
+            # 3. If naive, localize to settings.timezone
+            tz = pytz.timezone(settings.timezone) # "Asia/Kolkata" or similar
+            localized_dt = tz.localize(dt)
+            return localized_dt.isoformat()
+            
+        except ValueError:
+            # If standard parsing fails, fallback logic (e.g. if partial string)
+            # but usually for 'YYYY-MM-DDTHH:MM:SS' the above works.
+            # If it fails, we might just return it and let API fail or try appending offset.
+            return f"{time_str}Z" # Fallback to UTC if all else fails
+        except Exception as e:
+            logger.error(f"Timezone conversion error for {time_str}: {e}")
+            return time_str
+
     async def get_available_resources(self, tenant_id: int) -> List[Dict[str, Any]]:
         """Returns the list of resources for this tenant from DB."""
         try:
@@ -127,11 +158,15 @@ class CalendarService:
         if resource_external_id and "@" in resource_external_id:
              target_calendar_id = resource_external_id
 
+        # Sanitize timestamps for GCal API
+        gcal_start = self._ensure_timezone(start_time)
+        gcal_end = self._ensure_timezone(end_time)
+
         try:
             events_result = service.events().list(
                 calendarId=target_calendar_id,
-                timeMin=start_time,
-                timeMax=end_time,
+                timeMin=gcal_start,
+                timeMax=gcal_end,
                 singleEvents=True,
                 orderBy='startTime'
             ).execute()
@@ -173,12 +208,16 @@ class CalendarService:
         - Status: pending.
         - Expires: NOW + 5 mins.
         """
-        # 1. Check availability
-        is_free = await self.check_availability(tenant_id, start_time, end_time, resource_id)
+        # 1. Sanitize timestamps
+        start_iso = self._ensure_timezone(start_time)
+        end_iso = self._ensure_timezone(end_time)
+
+        # 2. Check availability
+        is_free = await self.check_availability(tenant_id, start_iso, end_iso, resource_id)
         if not is_free:
              raise ValueError("Slot is not available.")
 
-        # 2. Insert Pending Record
+        # 3. Insert Pending Record
         expires_at = (datetime.now(pytz.utc) + timedelta(minutes=5)).isoformat()
         
         try:
@@ -187,8 +226,8 @@ class CalendarService:
                 "resource_id": resource_id,
                 "customer_name": customer_name,
                 "customer_phone": customer_phone,
-                "start_time": start_time,
-                "end_time": end_time,
+                "start_time": start_iso,
+                "end_time": end_iso,
                 "status": "pending",
                 "expires_at": expires_at
             }
@@ -297,15 +336,19 @@ class CalendarService:
         except:
             pass
 
+        # Sanitize timestamps for GCal API
+        gcal_start = self._ensure_timezone(booking['start_time'])
+        gcal_end = self._ensure_timezone(booking['end_time'])
+
         event_body = {
             'summary': f"Appt: {booking['customer_name']}",
             'description': f"Phone: {booking['customer_phone']}\nResourceID: {booking['resource_id']}",
             'start': {
-                'dateTime': booking['start_time'], 
+                'dateTime': gcal_start, 
                 'timeZone': settings.timezone
             },
             'end': {
-                'dateTime': booking['end_time'],
+                'dateTime': gcal_end,
                 'timeZone': settings.timezone
             }
         }
