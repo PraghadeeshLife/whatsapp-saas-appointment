@@ -239,6 +239,12 @@ class CalendarService:
                 return res_obj
             raise Exception("Failed to insert reservation into DB.")
         except Exception as e:
+            # Check if this is a Postgres Exclusion Constraint violation (overlapping)
+            err_str = str(e).lower()
+            if "overlap" in err_str or "exclude" in err_str or "duplicate" in err_str:
+                logger.warning(f"Concurrent booking conflict detected: {e}")
+                raise ValueError("This slot was just taken by another user. Please choose a different time.")
+                
             logger.exception(f"Reservation Error in DB for Tenant {tenant_id}, Resource {resource_id}: {e}")
             raise e
 
