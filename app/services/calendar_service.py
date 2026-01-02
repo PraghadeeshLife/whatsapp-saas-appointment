@@ -137,7 +137,7 @@ class CalendarService:
                         return False
                         
         except Exception as e:
-            logger.error(f"DB Availability check failed: {e}")
+            logger.exception(f"DB Availability check failed for Resource {resource_id}: {e}")
 
         # 2. GOOGLE CALENDAR CHECK
         resource_external_id = None
@@ -195,7 +195,7 @@ class CalendarService:
                 # If it has a DIFFERENT ResourceID, it's for someone else -> Free (continue loop)
                 
         except HttpError as e:
-            logger.error(f"GCal check failed: {e}")
+            logger.exception(f"GCal check failed for Resource {resource_id}: {e}")
             # Fail safe decision? Assuming DB is filtered correctly, GCal error shouldn't block 
             # unless we are strict. For now, log and return True (rely on DB).
 
@@ -231,13 +231,15 @@ class CalendarService:
                 "status": "pending",
                 "expires_at": expires_at
             }
+            logger.info(f"Inserting pending reservation into DB for Tenant {tenant_id}, Resource {resource_id}")
             response = supabase.table("appointments").insert(data).execute()
             if response.data:
-                logger.info(f"Reservation created: {response.data[0]['id']}")
-                return response.data[0]
-            raise Exception("Failed to insert reservation.")
+                res_obj = response.data[0]
+                logger.info(f"SUCCESS: Reservation created in DB. ID: {res_obj['id']}")
+                return res_obj
+            raise Exception("Failed to insert reservation into DB.")
         except Exception as e:
-            logger.error(f"Reservation Error: {e}")
+            logger.exception(f"Reservation Error in DB for Tenant {tenant_id}, Resource {resource_id}: {e}")
             raise e
 
     async def confirm_appointment(self, reservation_id: str) -> Dict[str, Any]:
@@ -271,10 +273,12 @@ class CalendarService:
             # 3. Sync to Google Calendar
             google_event_id = None
             try:
+                logger.info(f"Syncing confirmation for reservation {reservation_id} to Google Calendar")
                 g_evt = await self._sync_create_to_google(booking)
                 google_event_id = g_evt.get('id')
+                logger.info(f"SUCCESS: Synced to GCal. Event ID: {google_event_id}")
             except Exception as e:
-                logger.error(f"Failed to sync to Google Calendar: {e}")
+                logger.exception(f"Failed to sync confirmation to Google Calendar for reservation {reservation_id}: {e}")
                 # We typically still confirm in DB but mark sync error? 
                 # Or fail? SSOT says DB is truth. So we confirm, but log warning.
 
@@ -283,11 +287,15 @@ class CalendarService:
                 "status": "confirmed", 
                 "google_event_id": google_event_id
             }
+            logger.info(f"Updating reservation {reservation_id} to 'confirmed' in DB")
             upd = supabase.table("appointments").update(update_data).eq("id", reservation_id).execute()
-            return upd.data[0]
+            if upd.data:
+                logger.info(f"SUCCESS: Reservation {reservation_id} marked as confirmed in DB")
+                return upd.data[0]
+            raise Exception(f"Failed to update reservation {reservation_id} in DB")
             
         except Exception as e:
-            logger.error(f"Confirmation failed: {e}")
+            logger.exception(f"Confirmation failed for reservation {reservation_id}: {e}")
             raise e
 
     async def cancel_appointment(self, appointment_id: str) -> bool:
