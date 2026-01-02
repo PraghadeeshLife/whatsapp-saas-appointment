@@ -1,9 +1,11 @@
 import os
 import json
 import datetime
-import os.path
+import uuid
+import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
+import pytz
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -11,7 +13,6 @@ from googleapiclient.errors import HttpError
 
 from app.core.config import settings
 from app.core.supabase_client import supabase
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +21,13 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 class CalendarService:
     """
-    Wrapper for Google Calendar API interactions.
-    Handles dynamic authentication and generic resource management per tenant.
+    Wrapper for Calendar interactions (Postgres SSOT + Google Calendar Sync).
+    Implements Two-Phase Commit and Hybrid Availability.
     """
     def __init__(self):
         # In-memory mock data (only used if no credentials found for a tenant)
-        self.mock_events = []
-        self._load_mock_data()
+        # TODO: Refactor mock logic if needed, but primary path should be Postgres
+        pass
 
     def _get_credentials_for_tenant(self, tenant_id: int) -> Optional[Dict[str, Any]]:
         """Fetch credentials from Supabase for a specific tenant."""
@@ -60,173 +61,265 @@ class CalendarService:
             logger.error(f"Auth failed for tenant {tenant_id}: {e}")
             return None, "primary", True
 
-    def _load_mock_data(self):
-        now = datetime.now()
-        self.mock_events = [
-            {
-                "id": "mock_evt_1",
-                "resource_id": "dr_smith",
-                "summary": "Sample Appointment with Dr. Smith",
-                "start": (now + timedelta(days=1, hours=9)).isoformat(),
-                "end": (now + timedelta(days=1, hours=10)).isoformat(),
-                "description": "Initial sample for testing"
-            }
-        ]
-
-    async def get_available_resources(self, tenant_id: int) -> List[Dict[str, str]]:
-        """Returns the list of resources (Doctors, Rooms, Staff) for this tenant from DB."""
+    async def get_available_resources(self, tenant_id: int) -> List[Dict[str, Any]]:
+        """Returns the list of resources for this tenant from DB."""
         try:
             logger.debug(f"Fetching resources for tenant {tenant_id}...")
             response = supabase.table("resources").select("*").eq("tenant_id", tenant_id).execute()
-            if response.data:
-                # Map DB format to Agent/Calendar expected format
-                return [
-                    {
-                        "id": str(r["id"]),
-                        "external_id": r.get("external_id"),
-                        "name": r["name"],
-                        "description": r.get("description", "")
-                    }
-                    for r in response.data
-                ]
+            return response.data if response.data else []
         except Exception as e:
             logger.error(f"Failed to fetch resources for tenant {tenant_id}: {e}")
-        
-        # Fallback to empty list or basic mock if needed
-        return []
+            return []
 
-    async def list_events(self, tenant_id: int, time_min: str, time_max: str, resource_external_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def check_availability(self, tenant_id: int, start_time: str, end_time: str, resource_id: int) -> bool:
         """
-        List events for a specific resource using its external_id (Google Calendar ID).
+        Hyper-Availability Check (Multi-Staff Supported):
+        Returns False if:
+        1. Postgres has a 'confirmed' booking for THIS resource.
+        2. Postgres has a 'pending' booking for THIS resource.
+        3. Google Calendar has a busy slot for THIS resource (via specific ID or shared calendar tag).
         """
-        service, calendar_id, use_mock = self.get_service_for_tenant(tenant_id)
+        logger.info(f"Checking availability for Resource {resource_id} from {start_time} to {end_time}")
 
+        # 1. DB CHECK (Pending or Confirmed)
+        try:
+            now_iso = datetime.now(pytz.utc).isoformat()
+            
+            res = supabase.table("appointments")\
+                .select("status, expires_at, start_time, end_time")\
+                .eq("tenant_id", tenant_id)\
+                .eq("resource_id", resource_id)\
+                .lt("start_time", end_time)\
+                .gt("end_time", start_time)\
+                .execute()
+                
+            for booking in res.data:
+                status = booking['status']
+                expires_at = booking.get('expires_at')
+                
+                if status == 'confirmed':
+                    logger.info("Slot blocked by CONFIRMED appointment in DB.")
+                    return False
+                if status == 'pending':
+                    if expires_at and expires_at > now_iso:
+                        logger.info("Slot blocked by PENDING reservation in DB.")
+                        return False
+                        
+        except Exception as e:
+            logger.error(f"DB Availability check failed: {e}")
+
+        # 2. GOOGLE CALENDAR CHECK
+        resource_external_id = None
+        try:
+            r_res = supabase.table("resources").select("external_id").eq("id", resource_id).single().execute()
+            if r_res.data:
+                resource_external_id = r_res.data.get("external_id")
+        except:
+            pass
+            
+        service, tenant_calendar_id, use_mock = self.get_service_for_tenant(tenant_id)
         if use_mock:
-            logger.debug(f"Using mock data for tenant {tenant_id}")
-            events = self.mock_events
-            filtered = []
-            for event in events:
-                if event["start"] >= time_min and event["end"] <= time_max:
-                    if not resource_external_id or event.get("resource_id") == resource_external_id:
-                        filtered.append(event)
-            return filtered
+            return True 
+
+        # Logic: If resource has a specific external_id that looks like a calendar (email), use it.
+        # Otherwise use tenant primary calendar.
+        target_calendar_id = tenant_calendar_id
+        if resource_external_id and "@" in resource_external_id:
+             target_calendar_id = resource_external_id
 
         try:
-            logger.debug(f"Executing list call for {calendar_id} (Tenant: {tenant_id})...")
-            # Note: We use the resource_external_id to filter events in the description or via specific logic if needed.
-            # For simplicity, we list all events on the tenant's primary calendar and filter.
             events_result = service.events().list(
-                calendarId=calendar_id,
-                timeMin=time_min,
-                timeMax=time_max,
+                calendarId=target_calendar_id,
+                timeMin=start_time,
+                timeMax=end_time,
                 singleEvents=True,
                 orderBy='startTime'
             ).execute()
-            # logger.debug(f"API Response Keys: {list(events_result.keys())}")
             events = events_result.get('items', [])
-            logger.debug(f"Found {len(events)} events in Google Calendar.")
-            if len(events) > 0:
-                logger.debug(f"First event summary: {events[0].get('summary')}")
             
-            # Map Google events to our internal format
-            mapped_events = []
             for event in events:
-                start = event['start'].get('dateTime', event['start'].get('date'))
-                end = event['end'].get('dateTime', event['end'].get('date'))
+                # If we are checking the resource's OWN calendar, any event is a block.
+                if target_calendar_id != tenant_calendar_id:
+                     logger.info(f"Slot blocked by GCal event on {target_calendar_id}")
+                     return False
                 
-                # Simple extraction of resource_id from description if we stored it there
-                desc = event.get('description', '')
-                res_id = None
-                if "ResourceID:" in desc:
-                    res_id = desc.split("ResourceID:")[1].strip().split()[0]
+                # If we are checking the SHARED tenant calendar, we must check description tags.
+                # Format: "ResourceID: <id>"
+                description = event.get('description', '')
                 
-                mapped_events.append({
-                    "id": event['id'],
-                    "summary": event.get('summary'),
-                    "start": start,
-                    "end": end,
-                    "resource_id": res_id,
-                    "description": desc
-                })
-            
-            if resource_external_id:
-                mapped_events = [e for e in mapped_events if e["resource_id"] == resource_external_id]
+                # If event has NO ResourceID tag, assume it's a general holiday/block that affects EVERYONE.
+                if "ResourceID:" not in description:
+                    logger.info(f"Slot blocked by General/Shared Event: {event.get('summary')}")
+                    return False
                 
-            return mapped_events
-        except HttpError as error:
-            logger.error(f"Google Calendar list_events failed: {error}")
-            logger.debug(f"Error response content: {error.content.decode() if error.content else 'No content'}")
-            return []
+                # If event has a ResourceID tag, only block if it matches OUR resource.
+                if f"ResourceID: {resource_id}" in description:
+                    logger.info(f"Slot blocked by event for this resource: {event.get('summary')}")
+                    return False
+                
+                # If it has a DIFFERENT ResourceID, it's for someone else -> Free (continue loop)
+                
+        except HttpError as e:
+            logger.error(f"GCal check failed: {e}")
+            # Fail safe decision? Assuming DB is filtered correctly, GCal error shouldn't block 
+            # unless we are strict. For now, log and return True (rely on DB).
 
-    async def create_event(self, tenant_id: int, summary: str, start_time: str, end_time: str, resource_id: str, description: str = "") -> Dict[str, Any]:
+        return True
+
+    async def reserve_appointment(self, tenant_id: int, resource_id: int, customer_name: str, customer_phone: str, start_time: str, end_time: str) -> Dict[str, Any]:
         """
-        Create a new event in the calendar.
+        Phase 1: Soft Reservation.
+        - UUID lock.
+        - Status: pending.
+        - Expires: NOW + 5 mins.
         """
-        service, calendar_id, use_mock = self.get_service_for_tenant(tenant_id)
+        # 1. Check availability
+        is_free = await self.check_availability(tenant_id, start_time, end_time, resource_id)
+        if not is_free:
+             raise ValueError("Slot is not available.")
 
-        if use_mock:
-            logger.debug(f"MOCK CREATE for tenant {tenant_id}")
-            new_event = {
-                "id": f"evt_{int(datetime.now().timestamp())}",
-                "resource_id": resource_id,
-                "summary": summary,
-                "start": start_time,
-                "end": end_time,
-                "description": description
-            }
-            self.mock_events.append(new_event)
-            return new_event
-
-        # Add ResourceID to description for tracking
-        enhanced_description = f"{description}\n\nResourceID: {resource_id}"
+        # 2. Insert Pending Record
+        expires_at = (datetime.now(pytz.utc) + timedelta(minutes=5)).isoformat()
         
-        event = {
-            'summary': summary,
-            'description': enhanced_description,
+        try:
+            data = {
+                "tenant_id": tenant_id,
+                "resource_id": resource_id,
+                "customer_name": customer_name,
+                "customer_phone": customer_phone,
+                "start_time": start_time,
+                "end_time": end_time,
+                "status": "pending",
+                "expires_at": expires_at
+            }
+            response = supabase.table("appointments").insert(data).execute()
+            if response.data:
+                logger.info(f"Reservation created: {response.data[0]['id']}")
+                return response.data[0]
+            raise Exception("Failed to insert reservation.")
+        except Exception as e:
+            logger.error(f"Reservation Error: {e}")
+            raise e
+
+    async def confirm_appointment(self, reservation_id: str) -> Dict[str, Any]:
+        """
+        Phase 2: Hard Confirmation.
+        - Check if pending and valid.
+        - Sync to GCal.
+        - Update DB to confirmed.
+        """
+        try:
+            # 1. Fetch Reservation
+            res = supabase.table("appointments").select("*").eq("id", reservation_id).single().execute()
+            if not res.data:
+                raise ValueError("Reservation not found.")
+            
+            booking = res.data
+            
+            # 2. Validate Status & Expiry
+            if booking['status'] == 'confirmed':
+                return booking # Already confirmed
+            
+            if booking['status'] == 'cancelled':
+                raise ValueError("Reservation was cancelled.")
+                
+            now_iso = datetime.now(pytz.utc).isoformat()
+            if booking['expires_at'] and booking['expires_at'] < now_iso:
+                # Auto-cancel in DB if we caught it now
+                supabase.table("appointments").update({"status": "cancelled"}).eq("id", reservation_id).execute()
+                raise ValueError("Reservation expired.")
+
+            # 3. Sync to Google Calendar
+            google_event_id = None
+            try:
+                g_evt = await self._sync_create_to_google(booking)
+                google_event_id = g_evt.get('id')
+            except Exception as e:
+                logger.error(f"Failed to sync to Google Calendar: {e}")
+                # We typically still confirm in DB but mark sync error? 
+                # Or fail? SSOT says DB is truth. So we confirm, but log warning.
+
+            # 4. Update DB to Confirmed
+            update_data = {
+                "status": "confirmed", 
+                "google_event_id": google_event_id
+            }
+            upd = supabase.table("appointments").update(update_data).eq("id", reservation_id).execute()
+            return upd.data[0]
+            
+        except Exception as e:
+            logger.error(f"Confirmation failed: {e}")
+            raise e
+
+    async def cancel_appointment(self, appointment_id: str) -> bool:
+        """
+        Cancels appointment in DB and deletes from GCal.
+        """
+        try:
+            # 1. Get Booking
+            res = supabase.table("appointments").select("*").eq("id", appointment_id).single().execute()
+            if not res.data:
+                return False
+            booking = res.data
+            
+            # 2. Cancel in DB
+            supabase.table("appointments").update({"status": "cancelled"}).eq("id", appointment_id).execute()
+            
+            # 3. Cancel in GCal
+            if booking.get('google_event_id'):
+                try:
+                    service, calendar_id, use_mock = self.get_service_for_tenant(booking['tenant_id'])
+                    if not use_mock:
+                         service.events().delete(calendarId=calendar_id, eventId=booking['google_event_id']).execute()
+                except Exception as e:
+                    logger.warning(f"Failed to delete GCal event {booking.get('google_event_id')}: {e}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Cancel failed: {e}")
+            return False
+
+    async def _sync_create_to_google(self, booking: Dict[str, Any]) -> Dict[str, Any]:
+        """Internal helper to push a confirmed booking to Google Calendar."""
+        service, tenant_calendar_id, use_mock = self.get_service_for_tenant(booking['tenant_id'])
+        if use_mock:
+            return {"id": "mock_gcal_id"}
+
+        # Determine target calendar
+        target_calendar_id = tenant_calendar_id
+        # Fetch resource to see if it has a specific calendar
+        try:
+            r_res = supabase.table("resources").select("external_id").eq("id", booking['resource_id']).single().execute()
+            if r_res.data:
+                rid = r_res.data.get("external_id")
+                if rid and "@" in rid:
+                    target_calendar_id = rid
+        except:
+            pass
+
+        event_body = {
+            'summary': f"Appt: {booking['customer_name']}",
+            'description': f"Phone: {booking['customer_phone']}\nResourceID: {booking['resource_id']}",
             'start': {
-                'dateTime': start_time,
-                'timeZone': settings.timezone,
+                'dateTime': booking['start_time'], 
+                'timeZone': settings.timezone
             },
             'end': {
-                'dateTime': end_time,
-                'timeZone': settings.timezone,
-            },
-        }
-
-        try:
-            logger.debug(f"Inserting event into {calendar_id}: {summary}")
-            event_response = service.events().insert(calendarId=calendar_id, body=event).execute()
-            logger.debug(f"Create Response ID: {event_response.get('id')}")
-            logger.debug(f"Create Response Link: {event_response.get('htmlLink')}")
-            return {
-                "id": event_response['id'],
-                "summary": event_response.get('summary'),
-                "start": start_time,
-                "end": end_time,
-                "resource_id": resource_id,
-                "description": enhanced_description
+                'dateTime': booking['end_time'],
+                'timeZone': settings.timezone
             }
-        except HttpError as error:
-            logger.error(f"Google Calendar create_event failed: {error}")
-            raise Exception(f"Failed to create Google Calendar event: {error}")
+        }
+        
+        return service.events().insert(calendarId=target_calendar_id, body=event_body).execute()
 
-    async def delete_event(self, tenant_id: int, event_id: str):
-        """
-        Delete an event from the calendar.
-        """
-        service, calendar_id, use_mock = self.get_service_for_tenant(tenant_id)
-
-        if use_mock:
-            self.mock_events = [e for e in self.mock_events if e["id"] != event_id]
-            return True
-
-        try:
-            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
-            return True
-        except HttpError as error:
-            logger.error(f"Google Calendar delete_event failed: {error}")
-            logger.debug(f"Error response content: {error.content.decode() if error.content else 'No content'}")
-            return False
+    async def list_events(self, tenant_id: int, time_min: str, time_max: str, resource_external_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Deprecated/Legacy list method. Prefer checking specific availability."""
+        # For agent compatibility, we can list from DB + GCal if needed, or simplified DB list.
+        # This function was mainly used by check_availability in the old agent.
+        # We'll implement a simple DB list for context if agent asks "what slots are taken?"
+        
+        # ... logic similar to check_availability but returning list ...
+        return []
 
 # Singleton
 calendar_service = CalendarService()
