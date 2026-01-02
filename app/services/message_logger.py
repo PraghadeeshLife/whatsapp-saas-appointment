@@ -1,5 +1,8 @@
 from typing import Optional
 from app.core.supabase_client import supabase
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def log_message(
     tenant_id: int,
@@ -26,7 +29,7 @@ async def log_message(
         
         # Using .execute() on the rpc or table insert
         supabase.table("messages").insert(data).execute()
-        print(f"Message logged: {direction} | {sender_number} -> {recipient_number}")
+        logger.info(f"Message logged: {direction} | {sender_number} -> {recipient_number}")
         
     except Exception as e:
-        print(f"Failed to log message to Supabase: {e}")
+        logger.error(f"Failed to log message to Supabase: {e}")

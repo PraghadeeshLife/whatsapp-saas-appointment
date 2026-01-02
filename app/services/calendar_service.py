@@ -11,6 +11,9 @@ from googleapiclient.errors import HttpError
 
 from app.core.config import settings
 from app.core.supabase_client import supabase
+import logging
+
+logger = logging.getLogger(__name__)
 
 # If modifying these SCOPES, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
@@ -37,7 +40,7 @@ class CalendarService:
                     "calendar_id": data.get("google_calendar_id") or "primary"
                 }
         except Exception as e:
-            print(f"[ERROR] Failed to fetch credentials for tenant {tenant_id}: {e}")
+            logger.error(f"Failed to fetch credentials for tenant {tenant_id}: {e}")
         return None
 
     def get_service_for_tenant(self, tenant_id: int):
@@ -54,7 +57,7 @@ class CalendarService:
             service = build("calendar", "v3", credentials=creds)
             return service, tenant_creds["calendar_id"], False # use_mock = False
         except Exception as e:
-            print(f"[ERROR] Auth failed for tenant {tenant_id}: {e}")
+            logger.error(f"Auth failed for tenant {tenant_id}: {e}")
             return None, "primary", True
 
     def _load_mock_data(self):
@@ -73,7 +76,7 @@ class CalendarService:
     async def get_available_resources(self, tenant_id: int) -> List[Dict[str, str]]:
         """Returns the list of resources (Doctors, Rooms, Staff) for this tenant from DB."""
         try:
-            print(f"[DEBUG] Fetching resources for tenant {tenant_id}...")
+            logger.debug(f"Fetching resources for tenant {tenant_id}...")
             response = supabase.table("resources").select("*").eq("tenant_id", tenant_id).execute()
             if response.data:
                 # Map DB format to Agent/Calendar expected format
@@ -87,7 +90,7 @@ class CalendarService:
                     for r in response.data
                 ]
         except Exception as e:
-            print(f"[ERROR] Failed to fetch resources for tenant {tenant_id}: {e}")
+            logger.error(f"Failed to fetch resources for tenant {tenant_id}: {e}")
         
         # Fallback to empty list or basic mock if needed
         return []
@@ -99,7 +102,7 @@ class CalendarService:
         service, calendar_id, use_mock = self.get_service_for_tenant(tenant_id)
 
         if use_mock:
-            print(f"[DEBUG] Using mock data for tenant {tenant_id}")
+            logger.debug(f"Using mock data for tenant {tenant_id}")
             events = self.mock_events
             filtered = []
             for event in events:
@@ -109,7 +112,7 @@ class CalendarService:
             return filtered
 
         try:
-            print(f"[DEBUG] Executing list call for {calendar_id} (Tenant: {tenant_id})...")
+            logger.debug(f"Executing list call for {calendar_id} (Tenant: {tenant_id})...")
             # Note: We use the resource_external_id to filter events in the description or via specific logic if needed.
             # For simplicity, we list all events on the tenant's primary calendar and filter.
             events_result = service.events().list(
@@ -119,11 +122,11 @@ class CalendarService:
                 singleEvents=True,
                 orderBy='startTime'
             ).execute()
-            print(f"[DEBUG] API Response Keys: {list(events_result.keys())}")
+            # logger.debug(f"API Response Keys: {list(events_result.keys())}")
             events = events_result.get('items', [])
-            print(f"[DEBUG] Found {len(events)} events in Google Calendar.")
+            logger.debug(f"Found {len(events)} events in Google Calendar.")
             if len(events) > 0:
-                print(f"[DEBUG] First event summary: {events[0].get('summary')}")
+                logger.debug(f"First event summary: {events[0].get('summary')}")
             
             # Map Google events to our internal format
             mapped_events = []
@@ -151,8 +154,8 @@ class CalendarService:
                 
             return mapped_events
         except HttpError as error:
-            print(f"[ERROR] Google Calendar list_events failed: {error}")
-            print(f"[DEBUG] Error response content: {error.content.decode() if error.content else 'No content'}")
+            logger.error(f"Google Calendar list_events failed: {error}")
+            logger.debug(f"Error response content: {error.content.decode() if error.content else 'No content'}")
             return []
 
     async def create_event(self, tenant_id: int, summary: str, start_time: str, end_time: str, resource_id: str, description: str = "") -> Dict[str, Any]:
@@ -162,7 +165,7 @@ class CalendarService:
         service, calendar_id, use_mock = self.get_service_for_tenant(tenant_id)
 
         if use_mock:
-            print(f"[DEBUG] MOCK CREATE for tenant {tenant_id}")
+            logger.debug(f"MOCK CREATE for tenant {tenant_id}")
             new_event = {
                 "id": f"evt_{int(datetime.now().timestamp())}",
                 "resource_id": resource_id,
@@ -191,10 +194,10 @@ class CalendarService:
         }
 
         try:
-            print(f"[DEBUG] Inserting event into {calendar_id}: {summary}")
+            logger.debug(f"Inserting event into {calendar_id}: {summary}")
             event_response = service.events().insert(calendarId=calendar_id, body=event).execute()
-            print(f"[DEBUG] Create Response ID: {event_response.get('id')}")
-            print(f"[DEBUG] Create Response Link: {event_response.get('htmlLink')}")
+            logger.debug(f"Create Response ID: {event_response.get('id')}")
+            logger.debug(f"Create Response Link: {event_response.get('htmlLink')}")
             return {
                 "id": event_response['id'],
                 "summary": event_response.get('summary'),
@@ -204,7 +207,7 @@ class CalendarService:
                 "description": enhanced_description
             }
         except HttpError as error:
-            print(f"[ERROR] Google Calendar create_event failed: {error}")
+            logger.error(f"Google Calendar create_event failed: {error}")
             raise Exception(f"Failed to create Google Calendar event: {error}")
 
     async def delete_event(self, tenant_id: int, event_id: str):
@@ -221,8 +224,8 @@ class CalendarService:
             service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
             return True
         except HttpError as error:
-            print(f"[ERROR] Google Calendar delete_event failed: {error}")
-            print(f"[DEBUG] Error response content: {error.content.decode() if error.content else 'No content'}")
+            logger.error(f"Google Calendar delete_event failed: {error}")
+            logger.debug(f"Error response content: {error.content.decode() if error.content else 'No content'}")
             return False
 
 # Singleton

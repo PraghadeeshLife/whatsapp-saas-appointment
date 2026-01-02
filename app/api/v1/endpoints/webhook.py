@@ -6,6 +6,9 @@ from app.core.supabase_client import supabase
 from app.services.whatsapp import send_text_message
 from app.services.agent import agent
 from app.services.message_logger import log_message
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Processed Message ID Cache (In-Memory Deduplication)
 # Stores the last 1000 message IDs to prevent redundant processing during Meta retries.
@@ -24,13 +27,13 @@ async def verify_webhook(
     Handles the webhook verification from Meta.
     In a multi-tenant SaaS, check against a master token.
     """
-    print(f"--- Verification attempt ---")
+    logger.info(f"--- Verification attempt ---")
     
     if hub_mode == "subscribe" and hub_verify_token == settings.meta_verify_token:
-        print("Verification SUCCESS (Master Token)")
+        logger.info("Verification SUCCESS (Master Token)")
         return int(hub_challenge)
         
-    print("Verification FAILED")
+    logger.warning("Verification FAILED")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 @router.post("/")
@@ -42,7 +45,7 @@ async def handle_webhook(
     Handles incoming messages from Meta and generates AI responses
     after identifying the tenant using the Supabase client.
     """
-    print(f"--- Incoming Webhook POST ---")
+    logger.info(f"--- Incoming Webhook POST ---")
     
     try:
         payload = await request.json()
@@ -60,7 +63,7 @@ async def handle_webhook(
                 # We only want to process the 'messages' array.
                 if "messages" not in value:
                     if "statuses" in value:
-                        print("Skipping status update notification (sent/delivered/read)")
+                        logger.info("Skipping status update notification (sent/delivered/read)")
                     continue
 
                 metadata = value.get("metadata", {})
@@ -78,7 +81,7 @@ async def handle_webhook(
                     # --- 2. IN-MEMORY DEDUPLICATION CHECK ---
                     # Check if we've already started processing this ID (Meta retry)
                     if msg_id in PROCESSED_IDS:
-                        print(f"Skipping cached message: {msg_id}")
+                        logger.info(f"Skipping cached message: {msg_id}")
                         continue
                     
                     # Add to cache immediately
@@ -99,11 +102,11 @@ async def handle_webhook(
                 response = supabase.table("tenants").select("*").eq("whatsapp_phone_number_id", phone_number_id).execute()
                 
                 if not response.data:
-                    print(f"Tenant not found for phone_number_id: {phone_number_id}")
+                    logger.error(f"Tenant not found for phone_number_id: {phone_number_id}")
                     continue
                 
                 tenant_data = response.data[0]
-                print(f"Processing message for tenant: {tenant_data.get('name')}")
+                logger.info(f"Processing message for tenant: {tenant_data.get('name')}")
 
                 messages = value.get("messages", [])
                 for message in messages:
@@ -122,7 +125,7 @@ async def handle_webhook(
                                 whatsapp_message_id=message.get("id")
                             )
 
-                            print(f"Generating AI response for: '{text_body}'")
+                            logger.info(f"Generating AI response for: '{text_body}'")
                             ai_response = await agent.get_response(
                                 text=text_body, 
                                 sender_number=sender_number,
@@ -138,7 +141,7 @@ async def handle_webhook(
                             )
                             
     except Exception as e:
-        print(f"Error processing webhook: {e}")
+        logger.exception(f"Error processing webhook: {e}")
         return {"status": "error", "message": str(e)}
 
     return {"status": "success"}

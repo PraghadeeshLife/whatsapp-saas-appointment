@@ -1,6 +1,9 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.supabase_client import supabase
+import logging
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer()
 
@@ -18,7 +21,7 @@ async def get_current_user(auth: HTTPAuthorizationCredentials = Depends(security
             )
         return res.user
     except Exception as e:
-        print(f"Auth error: {e}")
+        logger.error(f"Auth error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed",

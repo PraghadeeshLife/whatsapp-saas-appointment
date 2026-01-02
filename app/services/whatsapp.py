@@ -1,6 +1,9 @@
 import httpx
 from app.core.config import settings
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def send_text_message(
     phone_number_id: str,
@@ -16,11 +19,11 @@ async def send_text_message(
     
     token = access_token or settings.meta_access_token
     if not token:
-        print("Error: No WhatsApp access token provided or configured.")
+        logger.error("No WhatsApp access token provided or configured.")
         return False
 
     url = f"https://graph.facebook.com/{settings.meta_api_version}/{phone_number_id}/messages"
-    print(f"Sending message to {url}")
+    logger.info(f"Sending message to {url}")
     
     # Use real headers for the actual request
     real_headers = {
@@ -35,7 +38,7 @@ async def send_text_message(
         "type": "text",
         "text": {"preview_url": False, "body": text},
     }
-    print(f"Message payload: {payload}")
+    logger.info(f"Message payload: {payload}")
     
     async with httpx.AsyncClient() as client:
         try:
@@ -43,10 +46,10 @@ async def send_text_message(
             response_data = response.json()
             
             if response.status_code != 200:
-                print(f"Error sending message (Status {response.status_code}): {response_data}")
+                logger.error(f"Error sending message (Status {response.status_code}): {response_data}")
                 return False
                 
-            print(f"Message sent successfully to {recipient_number}")
+            logger.info(f"Message sent successfully to {recipient_number}")
             resp_json = response_data # Use the already parsed response_data
             whatsapp_message_id = resp_json.get("messages", [{}])[0].get("id")
             
@@ -63,5 +66,5 @@ async def send_text_message(
                 )
             return resp_json
         except Exception as e:
-            print(f"Exception during message sending: {e}")
+            logger.exception(f"Exception during message sending: {e}")
             return False

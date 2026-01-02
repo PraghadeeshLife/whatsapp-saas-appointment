@@ -1,9 +1,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import Optional
+from typing import Optional, List
 
 class Settings(BaseSettings):
     app_name: str = "WhatsApp Appointment SaaS"
     api_v1_str: str = "/api/v1"
+
+    # New Relic configuration
+    new_relic_license_key: Optional[str] = None
+    new_relic_app_name: str = "whatsapp-saas-appointment"
     
     # Meta API configuration
     meta_verify_token: str = "default_verify_token"
@@ -24,7 +28,7 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Kolkata"
     
     # CORS configuration
-    backend_cors_origins: list[str] = ["*"]
+    backend_cors_origins: List[str] = ["*"]
     
     model_config = SettingsConfigDict(
         env_file=".env",

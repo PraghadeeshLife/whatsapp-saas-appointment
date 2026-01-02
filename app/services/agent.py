@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta
 from typing import TypedDict, Annotated, List, Union, Dict, Any, Optional, Sequence
+import logging
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -13,6 +14,8 @@ from app.core.config import settings
 from app.services.calendar_service import calendar_service
 from app.services.prompts import SYSTEM_PROMPT_TEMPLATE
 
+logger = logging.getLogger(__name__)
+
 # --- State Definition ---
 
 class AgentState(TypedDict):
@@ -20,13 +23,12 @@ class AgentState(TypedDict):
     tenant_id: int
 
 # --- Defined Tools ---
-
 @tool
 async def get_available_resources(state: AgentState) -> str:
     """Returns a list of available resources (e.g., staff, rooms, equipment, service providers) available."""
     tenant_id = state.get("tenant_id")
-    print(f"TENANT ID: {tenant_id}")
-    resources = await calendar_service.get_available_resources(tenant_id)
+    logger.info(f"TENANT ID: {tenant_id}")
+    resources = await calendar_service.get_available_resources(state.get("tenant_id"))
     if not resources:
         return "No resources are currently registered for this account."
     
