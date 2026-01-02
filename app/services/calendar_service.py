@@ -378,5 +378,39 @@ class CalendarService:
         # ... logic similar to check_availability but returning list ...
         return []
 
+    async def get_appointments(
+        self, 
+        tenant_id: int, 
+        resource_id: Optional[int] = None, 
+        status: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch appointments from Supabase with optional filters.
+        """
+        try:
+            logger.info(f"Fetching appointments for Tenant {tenant_id} (Resource: {resource_id}, Status: {status})")
+            query = supabase.table("appointments").select("*, resources(name)").eq("tenant_id", tenant_id)
+            
+            if resource_id:
+                query = query.eq("resource_id", resource_id)
+            if status:
+                query = query.eq("status", status)
+            if start_time:
+                query = query.gte("start_time", self._ensure_timezone(start_time))
+            if end_time:
+                query = query.lte("end_time", self._ensure_timezone(end_time))
+            
+            # Order by start_time
+            query = query.order("start_time")
+            
+            response = query.execute()
+            logger.info(f"SUCCESS: Found {len(response.data)} appointments for Tenant {tenant_id}")
+            return response.data
+        except Exception as e:
+            logger.exception(f"Failed to fetch appointments for Tenant {tenant_id}: {e}")
+            return []
+
 # Singleton
 calendar_service = CalendarService()
