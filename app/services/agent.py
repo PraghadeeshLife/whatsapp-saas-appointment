@@ -217,7 +217,7 @@ class AppointmentAgent:
     def __init__(self):
         self.tools = [get_available_resources, check_availability, reserve_slot, confirm_booking, cancel_appointment]
         self.llm = ChatOpenAI(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             openai_api_key=settings.openai_api_key
         ).bind_tools(self.tools)
         
